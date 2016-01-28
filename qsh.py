@@ -81,8 +81,8 @@ class DateTime:
 
 class Relative:
     @staticmethod
-    def read(stream):
-        return Leb128.read(stream)
+    def read(stream, last):
+        return last + Leb128.read(stream)
 
 
 class String:
@@ -95,17 +95,17 @@ class String:
 
 class Growing:
     @staticmethod
-    def read(stream):
+    def read(stream, last):
         result = ULeb128.read(stream)
         if result == 268435455:
             result = Leb128.read(stream)
-        return result
+        return last + result
 
 
 class GrowDateTime:
     @staticmethod
-    def read(stream):
-        return Growing.read(stream)
+    def read(stream, last):
+        return Growing.read(stream, last)
 
 
 class FileTitle:
@@ -124,6 +124,7 @@ class FileTitle:
         r += '\t> version: ' + str(self.version) + '\n'
         r += '\t> application: ' + self.application + '\n'
         r += '\t> comments: ' + self.comment + '\n'
+        r += '\t> start time: ' + str(self.start) + '\n'
         r += '\t> threads: ' + str(self.n_threads) + '\n'
         # no start time here
         return r
@@ -157,105 +158,164 @@ class ThreadTitle:
         return 'Thread #' + str(self._id) + '\n\t> type: ' + t + '\n\t> Security: ' + self.security
 
 
-# желательно заменить этот класс на словарь
-class OrdLogData:
-    def __init__(self, binfo, ex_time=None, ord_no=None, ord_price=None, vol=None, rest=None, deal_no=None,
-                 deal_price=None, oi=None):
-        (self.NonZeroReplAct,
-         self.SessIdChanged,
-         self.Add,
-         self.Fill,
-         self.Buy,
-         self.Sell,
-         self.reserved,
-         self.Quote,
-         self.Counter,
-         self.NonSystem,
-         self.EndOfTransaction,
-         self.FillOrKill,
-         self.Moved,
-         self.Canceled,
-         self.CanceledGroup,
-         self.CrossTrade) = binfo
-        self.ex_time = ex_time
-        self.ord_no = ord_no
-        self.ord_price = ord_price
-        self.vol = vol
-        self.rest = rest
-        self.deal_no = deal_no
-        self.deal_price = deal_price
-        self.oi = oi
-
-
 class FrameTitle:
     _n = 0
 
-    def __init__(self, stream, one_thread=True):
-        self.timestamp = GrowDateTime.read(stream)
-        if one_thread:
+    def __init__(self, *args, one_thread=True):
+        if len(args) != 2:
+            self.timestamp = args[0].start
             self.thread_n = 0
         else:
-            self.thread_n = byte.read(stream)
-        FrameTitle._n += 1
+            stream, prev = args
+            self.timestamp = GrowDateTime.read(stream, prev.timestamp)
+            if one_thread:
+                self.thread_n = 0
+            else:
+                self.thread_n = byte.read(stream)
+            FrameTitle._n += 1
 
     def __str__(self):
         return 'Frame ' + '(timestamp:' + str(self.timestamp) + '; thread #' + str(self.thread_n) + ')'
 
 
 class FrameData:
-    def __init__(self, stream):
-        b = byte.read(stream)
-        self.bflags = list(map(lambda x: int(bool(x)), ((b & mask) for mask in (2 ** x for x in range(8)))))  # [::-1]
-        b2 = uint16.read(stream)
-        info = list(map(lambda x: int(bool(x)), ((b2 & mask) for mask in (2 ** x for x in range(16)))))  # [::-1]
-        if info[-3]:
-            structure = (GrowDateTime, Growing, Relative, Leb128, Leb128, Growing, Relative, Relative)
+
+    n = 0
+
+    def __init__(self, *args):
+        if len(args) != 2:
+            # flags
+            self.NonZeroReplAct = 0
+            self.SessIdChanged = 0
+            self.Add = 0
+            self.Fill = 0
+            self.Buy = 0
+            self.Sell = 0
+            # 6th bit is reserved
+            self.reserved = 0
+            self.Quote = 0
+            self.Counter = 0
+            self.NonSystem = 0
+            self.EndOfTransaction = 0
+            self.FillOrKill = 0
+            self.Moved = 0
+            self.Canceled = 0
+            self.CanceledGroup = 0
+            self.CrossTrade = 0
+            # main data
+            self.exchange_time = 0
+            self.ord_no = 0
+            self.ord_price = 0
+            self.vol = 0
+            self.rest = 0
+            self.deal_no = 0
+            self.deal_price = 0
+            self.oi = 0
         else:
-            structure = (GrowDateTime, Relative, Relative, Leb128, Leb128, Growing, Relative, Relative)
-        values = dict()  # возможно, стоит использовать defaultdict()
-        keys = ('ex_time', 'ord_no', 'ord_price', 'vol', 'rest', 'deal_no', 'deal_price', 'oi')
-        for i, v in enumerate(keys):
-            if self.bflags[i]:
-                # print("reading ", v, " as ", structure[i])
-                values[v] = structure[i].read(stream)
-            else:
-                values[v] = None
-        self.data = OrdLogData(info, **values)
+            stream, prev = args
+            FrameData.n += 1
+            b1 = byte.read(stream)
+            b2 = uint16.read(stream)
+            self.NonZeroReplAct = (b2 & 2**0)
+            self.SessIdChanged = (b2 & 2**1)
+            self.Add = (b2 & 2**2)
+            self.Fill = (b2 & 2**3)
+            self.Buy = (b2 & 2**4)
+            self.Sell = (b2 & 2**5)
+            # 6th bit is reserved
+            self.reserved = (b2 & 2**6)
+            self.Quote = (b2 & 2**7)
+            self.Counter = (b2 & 2**8)
+            self.NonSystem = (b2 & 2**9)
+            self.EndOfTransaction = (b2 & 2**10)
+            self.FillOrKill = (b2 & 2**11)
+            self.Moved = (b2 & 2**12)
+            self.Canceled = (b2 & 2**13)
+            self.CanceledGroup = (b2 & 2**14)
+            self.CrossTrade = (b2 & 2**15)
+            if b1 & 2**0:
+                self.exchange_time = GrowDateTime.read(stream, prev.exchange_time)
+            if b1 & 2**1:
+                if self.Add:
+                    self.ord_no = Growing.read(stream, prev.ord_no)
+                else:
+                    self.ord_no = Relative.read(stream, prev.ord_no)
+            if b1 & 2**2:
+                self.ord_price = Relative.read(stream, prev.ord_price)
+            if b1 & 2**3:
+                self.vol = Leb128.read(stream)
+            if b1 & 2**4:
+                self.rest = Leb128.read(stream)
+            if b1 & 2**5:
+                self.deal_no = Growing.read(stream, prev.deal_no)
+            if b1 & 2**6:
+                self.deal_price = Relative.read(stream, prev.deal_price)
+            if b1 & 2**7:
+                self.oi = Relative.read(stream, prev.oi)
 
     def __str__(self):
         result = ''
-        result += '\t> ReplAct: ' + str(self.data.NonZeroReplAct)
-        result += '\n\t> Идентификатор сессии изменен:' + str(self.data.SessIdChanged)
-        result += '\n\t> Новая заявка: ' + str(self.data.Add)
-        result += '\n\t> Заявка сведена в сделку: ' + str(self.data.Fill)
-        result += '\n\t> Покупка: ' + str(self.data.Buy)
-        result += '\n\t> Продажа: ' + str(self.data.Sell)
-        result += '\n\t> Зарезервированное поле (0): ' + str(self.data.reserved)
-        result += '\n\t> Котировочная: ' + str(self.data.Quote)
-        result += '\n\t> Встречная: ' + str(self.data.Counter)
-        result += '\n\t> Внесистемная: ' + str(self.data.NonSystem)
-        result += '\n\t> Является последней в транзакции: ' + str(self.data.EndOfTransaction)
-        result += '\n\t> Fill-Or-Kill: ' + str(self.data.FillOrKill)
-        result += '\n\t> Перемещение: ' + str(self.data.Moved)
-        result += '\n\t> Удаление: ' + str(self.data.Canceled)
-        result += '\n\t> Групповое удалеление: ' + str(self.data.CanceledGroup)
-        result += '\n\t> Удаление остатка по причине кросс-сделки: ' + str(self.data.CrossTrade)
+        result += '\t> ReplAct: ' + str(bool(self.NonZeroReplAct))
+        result += '\n\t> Идентификатор сессии изменен:' + str(bool(self.SessIdChanged))
+        result += '\n\t> Новая заявка: ' + str(bool(self.Add))
+        result += '\n\t> Заявка сведена в сделку: ' + str(bool(self.Fill))
+        result += '\n\t> Покупка: ' + str(bool(self.Buy))
+        result += '\n\t> Продажа: ' + str(bool(self.Sell))
+        result += '\n\t> Зарезервированное поле (0): ' + str(self.reserved)
+        result += '\n\t> Котировочная: ' + str(bool(self.Quote))
+        result += '\n\t> Встречная: ' + str(bool(self.Counter))
+        result += '\n\t> Внесистемная: ' + str(bool(self.NonSystem))
+        result += '\n\t> Является последней в транзакции: ' + str(bool(self.EndOfTransaction))
+        result += '\n\t> Fill-Or-Kill: ' + str(bool(self.FillOrKill))
+        result += '\n\t> Перемещение: ' + str(bool(self.Moved))
+        result += '\n\t> Удаление: ' + str(bool(self.Canceled))
+        result += '\n\t> Групповое удалеление: ' + str(bool(self.CanceledGroup))
+        result += '\n\t> Удаление остатка по причине кросс-сделки: ' + str(bool(self.CrossTrade))
         #
-        result += '\n\t> Биржевое время: ' + str(self.data.ex_time)
-        result += '\n\t> Номер заявки: ' + str(self.data.ord_no)
-        result += '\n\t> Цена в заявке: ' + str(self.data.ord_price)
-        result += '\n\t> Объем операции: ' + str(self.data.vol)
-        result += '\n\t> Остаток в заявке: ' + str(self.data.rest)
-        result += '\n\t> Номер сделки: ' + str(self.data.deal_no)
-        result += '\n\t> Цена сделки: ' + str(self.data.deal_price)
-        result += '\n\t> Открытый интерес после сделки: ' + str(self.data.oi)
+        try:
+            result += '\n\t> Биржевое время: ' + str(self.exchange_time)
+        except AttributeError:
+            pass
+        try:
+            result += '\n\t> Номер заявки: ' + str(self.ord_no)
+        except AttributeError:
+            pass
+        try:
+            result += '\n\t> Цена в заявке: ' + str(self.ord_price)
+        except AttributeError:
+            pass
+        try:
+            result += '\n\t> Объем операции: ' + str(self.vol)
+        except AttributeError:
+            pass
+        try:
+            result += '\n\t> Остаток в заявке: ' + str(self.rest)
+        except AttributeError:
+            pass
+        try:
+            result += '\n\t> Номер сделки: ' + str(self.deal_no)
+        except AttributeError:
+            pass
+        try:
+            result += '\n\t> Цена сделки: ' + str(self.deal_price)
+        except AttributeError:
+            pass
+        try:
+            result += '\n\t> Открытый интерес после сделки: ' + str(self.oi)
+        except AttributeError:
+            pass
         return result
 
 
 class Frame:
-    def __init__(self, stream):
-        self.title = FrameTitle(stream)
-        self.data = FrameData(stream)
+    def __init__(self, *args):
+        if len(args) != 2:
+            self.title = FrameTitle(*args)
+            self.data = FrameData()
+        else:
+            stream, prev_frame = args
+            self.title = FrameTitle(stream, prev_frame.title)
+            self.data = FrameData(stream, prev_frame.data)
 
     def __str__(self):
         return str(self.title) + '\n' + str(self.data)

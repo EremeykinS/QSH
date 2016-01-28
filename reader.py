@@ -9,15 +9,11 @@ print(ft)
 tht = ThreadTitle(qsh)
 print(tht)
 # read Frames
+# First
+fr = [Frame(ft)]
+# 2 more
+for i in range(2):
+    fr.append(Frame(qsh, fr[-1]))
 
-
-fr = []
-for i in range(1):
-    fr.append(Frame(qsh))
-    print(fr[i])
-
-
-
-# print(ULeb128.read(qsh))
-# print(Leb128.read(qsh))
-# print(ByteArray.read(qsh,5))
+for frame in fr:
+    print(frame)
